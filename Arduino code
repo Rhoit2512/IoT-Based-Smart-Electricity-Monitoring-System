@@ -1,0 +1,72 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "EmonLib.h" // Requires EmonLib by OpenEnergyMonitor
+
+// --- Network & MQTT Settings ---
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+const char* mqtt_server = "YOUR_BROKER_IP"; // e.g., "192.168.1.50"
+
+// --- Project Constants ---
+const double VOLTAGE = 230.0;        // Standard AC voltage in India
+const double COST_PER_KWH = 7.0;     // Average cost per unit (INR)
+const int CURRENT_SENSOR_PIN = 34;   // Analog pin for SCT-013
+const double CALIBRATION = 60.6;     // Calibration factor for your burden resistor
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+EnergyMonitor emon1;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Initialize Sensor
+  emon1.current(CURRENT_SENSOR_PIN, CALIBRATION); 
+
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  
+  client.setServer(mqtt_server, 1883);
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    if (client.connect("ElectricityMonitor_Node1")) {
+      Serial.println("Connected to MQTT Broker");
+    } else {
+      delay(5000);
+    }
+  }
+}
+
+void loop() {
+  if (!client.connected()) reconnect();
+  client.loop();
+
+  // 1. Calculate RMS Current
+  // 1480 is the number of samples taken per reading
+  double Irms = emon1.calcIrms(1480); 
+
+  // 2. Calculate Power and Estimated Cost
+  double wattage = Irms * VOLTAGE;
+  double cost_estimate = (wattage / 1000.0) * COST_PER_KWH;
+
+  // 3. Create JSON payload for time-series data
+  char payload[100];
+  snprintf(payload, 100, "{\"current\": %.2f, \"power\": %.2f, \"cost\": %.4f}", 
+           Irms, wattage, cost_estimate);
+
+  // 4. Publish to MQTT for Python/Grafana to use
+  client.publish("sensors/electricity", payload);
+
+  // Debugging output
+  Serial.print("Current: "); Serial.print(Irms);
+  Serial.print(" A | Power: "); Serial.print(wattage);
+  Serial.println(" W");
+
+  delay(5000); // Wait 5 seconds between readings
+}
