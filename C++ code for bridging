@@ -1,0 +1,51 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "EmonLib.h" // Energy Monitoring Library
+
+// Network Credentials
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+const char* mqtt_server = "YOUR_MQTT_BROKER_IP";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+EnergyMonitor emon1;
+
+void setup() {
+  Serial.begin(115200);
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+  
+  // Initialize Sensor (Pin 34, Calibration factor)
+  emon1.current(34, 111.1); 
+}
+
+void setup_wifi() {
+  delay(10);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); }
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    if (client.connect("ESP32_Electricity_Monitor")) {
+      Serial.println("Connected to MQTT");
+    } else { delay(5000); }
+  }
+}
+
+void loop() {
+  if (!client.connected()) reconnect();
+  client.loop();
+
+  // Calculate Amps and Wattage
+  double Irms = emon1.calcIrms(1480);
+  double wattage = Irms * 230.0; // Assuming 230V
+
+  // Publish Data
+  char msg[50];
+  snprintf(msg, 50, "{\"current\": %.2f, \"wattage\": %.2f}", Irms, wattage);
+  client.publish("home/electricity/data", msg);
+
+  delay(5000); // 5-second telemetry interval
+}
